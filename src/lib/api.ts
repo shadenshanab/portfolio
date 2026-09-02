@@ -1,22 +1,37 @@
 /**
  * The single boundary between the AI Twin UI and whatever is answering it.
+ * The UI just consumes an async iterable of text chunks plus a `meta` promise.
  *
- * Today: the local answer bank (no network, no cost).
- * Phase 2: point `CHAT_ENDPOINT` at the Cloudflare Worker and flip USE_REMOTE.
- * The UI never changes — it just consumes an async iterable of text chunks.
+ * Routing:
+ *   - "hi"/"hello" style openers are served straight from the answer bank — the
+ *     canned line is fine and it has a pre-recorded voice clip, so there's
+ *     nothing for a model to add.
+ *   - Everything else goes to the hosted LLM (Cloudflare Worker -> HuggingFace).
+ *     Every chunk it returns is checked for Arabic before display; on any
+ *     failure (or if it goes off-script into Arabic) the UI falls back to the
+ *     grounded answer-bank response for that question.
+ *   - With USE_REMOTE off, everything is served from the bank.
  */
 
-import { answer, type Answer } from './answerBank'
+import { answer, isArabic, type Answer } from './answerBank'
 
 const USE_REMOTE = true
 const CHAT_ENDPOINT = 'https://api.shaden-ai.com/chat'
 const SPEAK_ENDPOINT = 'https://api.shaden-ai.com/speak'
 
+export type ChatMeta = {
+  sources: string[]
+  /** Intent id the answer bank matched, or 'none'. */
+  matched: string
+  /** 'local' = the displayed text is the bank's exact wording. 'remote' = the LLM wrote it. */
+  mode: 'local' | 'remote'
+}
+
 export type ChatResult = {
   /** Streams the answer chunk by chunk so the UI can type it out. */
   stream: AsyncIterable<string>
-  /** Resolves once the full answer is known (sources, matched intent). */
-  meta: Promise<{ sources: string[]; matched: string; mode: 'local' | 'remote' }>
+  /** Resolves once the full answer is known. */
+  meta: Promise<ChatMeta>
 }
 
 /** Split text into small chunks so local answers still feel like they're being typed. */
@@ -55,21 +70,28 @@ async function* remoteStream(question: string, signal?: AbortSignal): AsyncItera
 }
 
 export function chat(question: string, signal?: AbortSignal): ChatResult {
-  if (!USE_REMOTE) return localChat(question, signal)
-
   const a = answer(question)
+
+  // The opening turn never needs a model.
+  if (!USE_REMOTE || a.matched === 'greeting') return localChat(question, signal)
+
   let usedRemote = true
 
   async function* guarded() {
     try {
       let any = false
       for await (const chunk of remoteStream(question, signal)) {
+        // Deterministic backstop: no Arabic ever reaches the transcript. The
+        // Worker has its own server-side version of this check; this one also
+        // covers a stale Worker deploy or a poisoned cache entry.
+        if (isArabic(chunk)) throw new Error('arabic')
         any = true
         yield chunk
       }
       if (!any) throw new Error('empty')
     } catch {
-      // Worker down, rate limited, or out of credits — fall back silently.
+      // Worker down, rate limited, out of credits, or it went off-script —
+      // fall back silently to the grounded bank answer.
       usedRemote = false
       yield* typeOut(a.text, signal)
     }
@@ -94,7 +116,7 @@ export function chat(question: string, signal?: AbortSignal): ChatResult {
  * meant to be tried once and abandoned on any failure — never retried, never
  * thrown — the caller falls back to the browser's instant built-in voice.
  * Returns null on anything short of a clean 200: network error, cold Space,
- * rate limit, or the reference audio not being deployed yet.
+ * rate limit, or the Space itself erroring out.
  */
 export async function fetchClonedSpeech(text: string, signal?: AbortSignal): Promise<Blob | null> {
   try {

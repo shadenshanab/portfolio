@@ -14,15 +14,15 @@ const ALLOWED_ORIGINS = new Set([
 ])
 
 // Model choice, verified against the live HF router before shipping:
-// - Qwen2.5-7B-Instruct is only servable (for this account) via `together`
-//   (which silently redirects to a paid "-Turbo" dedicated variant — 400s)
-//   or `featherless-ai`, which leaked a stray Chinese sentence into an
-//   Arabic reply during testing — unacceptable for production.
-// - meta-llama/Llama-3.1-8B-Instruct via `novita` was clean, ~2x faster,
-//   and correctly grounded on the CV facts below, so it's what ships.
-//   Cost: $0.02 / $0.05 per 1M input/output tokens — a full conversation
-//   is a fraction of a cent.
-const MODEL = 'meta-llama/Llama-3.1-8B-Instruct:novita'
+// - Llama-3.1-8B-Instruct (the previous pick) was cheap and fast but weak on the
+//   two rules that matter most here: it answered in Arabic when a user asked it
+//   to, and it drifted off the CV facts / into the third person.
+// - Llama-3.3-70B-Instruct via `novita` holds the first-person voice, stays
+//   grounded, answers Arabic-dialect questions in English, and refuses
+//   off-topic ones cleanly. Cost ~$0.13 / $0.39 per 1M input/output tokens —
+//   with the ~1.2k-token prompt and the daily cap below, a few cents a day.
+// - Qwen2.5-7B-Instruct still leaks the odd non-English token; not used.
+const MODEL = 'meta-llama/Llama-3.3-70B-Instruct:novita'
 const HF_CHAT_URL = 'https://router.huggingface.co/v1/chat/completions'
 
 const MAX_INPUT_CHARS = 1000
@@ -200,7 +200,9 @@ async function handleChat(req: Request, env: Env): Promise<Response> {
   const cacheKey = `${normCacheKey(question)}:${ar ? 'ar' : 'en'}`
   if (env.CACHE) {
     const cached = await env.CACHE.get(cacheKey)
-    if (cached) return streamText(cached, origin)
+    // Never serve a cached answer that contains Arabic — it predates the
+    // language backstop; drop it and regenerate.
+    if (cached && !isArabic(cached)) return streamText(cached, origin)
   }
 
   const upstream = await fetch(HF_CHAT_URL, {
@@ -239,6 +241,32 @@ async function sha256Hex(text: string): Promise<string> {
 }
 
 type GradioFileResult = { url: string } | null
+
+/** Uploads the fixed reference voice to the Space and returns the server-side
+ *  path Gradio hands back. The Space's `generate_voice_clone` only accepts an
+ *  uploaded file — a remote `url` FileData is rejected — so this has to happen
+ *  before every generation. Gradio content-hashes uploads, and the path is
+ *  cached in KV, so in practice this is one small request most of the time. */
+async function uploadRefAudio(env: Env, signal: AbortSignal): Promise<string | null> {
+  const cached = await env.CACHE?.get('speak:refpath')
+  if (cached) return cached
+
+  const audio = await fetch(REF_AUDIO_URL, { signal })
+  if (!audio.ok) return null
+  const form = new FormData()
+  form.append('files', new Blob([await audio.arrayBuffer()], { type: 'audio/wav' }), 'voice-ref.wav')
+
+  const up = await fetch(`${TTS_SPACE}/gradio_api/upload`, { method: 'POST', body: form, signal })
+  if (!up.ok) return null
+  const paths = (await up.json()) as string[]
+  const path = paths?.[0]
+  if (!path) return null
+
+  // 30 min: long enough to amortise, short enough that a Space restart (which
+  // invalidates the path) self-heals quickly.
+  await env.CACHE?.put('speak:refpath', path, { expirationTtl: 1800 })
+  return path
+}
 
 /** Calls one Gradio `/gradio_api/call/<fn>` endpoint (POST to start, then poll
  *  its SSE result stream) and returns the first file result it completes with. */
@@ -279,9 +307,11 @@ async function callGradioForFile(fnName: string, data: unknown[], timeoutMs: num
         try {
           const parsed = JSON.parse(m[1])
           const file = parsed?.[0]
-          if (file?.url) {
+          const url: string | undefined =
+            file?.url ?? (file?.path ? `${TTS_SPACE}/gradio_api/file=${file.path}` : undefined)
+          if (url) {
             await reader.cancel()
-            return { url: file.url }
+            return { url }
           }
         } catch {
           // heartbeat or partial payload — keep polling
@@ -325,10 +355,22 @@ async function handleSpeak(req: Request, env: Env): Promise<Response> {
   const allowed = await checkRateLimit(env, ip, 'speak', SPEAK_RATE_LIMIT_PER_HOUR, SPEAK_GLOBAL_DAILY_CAP)
   if (!allowed) return json({ error: 'rate limit exceeded, try again later' }, 429, origin)
 
+  const uploadCtl = new AbortController()
+  const uploadTimer = setTimeout(() => uploadCtl.abort(), 12_000)
+  let refPath: string | null
+  try {
+    refPath = await uploadRefAudio(env, uploadCtl.signal)
+  } catch {
+    refPath = null
+  } finally {
+    clearTimeout(uploadTimer)
+  }
+  if (!refPath) return json({ error: 'reference audio unavailable' }, 502, origin)
+
   const result = await callGradioForFile(
     'generate_voice_clone',
     [
-      { path: null, url: REF_AUDIO_URL, meta: { _type: 'gradio.FileData' } },
+      { path: refPath, meta: { _type: 'gradio.FileData' } },
       REF_TEXT,
       text,
       'English',

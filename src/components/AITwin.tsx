@@ -6,7 +6,7 @@ import { useVoice } from '../hooks/useVoice'
 import { SectionHead } from './SectionHead'
 import { Reveal } from './Reveal'
 import { Loader } from './Loader'
-import { Mail, Mic, Phone, Send, Speaker, Stop } from './icons'
+import { Mail, Phone, Send, Speaker } from './icons'
 
 /** Which message the cloned/browser voice is working on, and where it is:
  *  'loading'  — fetching the audio (pre-baked clip, or a fresh clone ~15-25s)
@@ -22,19 +22,18 @@ type Msg = {
   ar: boolean
   sources?: string[]
   streaming?: boolean
+  /** Path to a pre-recorded clip of this exact line in Shaden's voice. Only the
+   *  opening greeting has one — regenerate with `npm run gen:greeting`. */
+  voiceClip?: string
 }
 
 const GREETING: Msg = {
   id: 0,
   role: 'bot',
   ar: false,
-  text: "I'm Shaden's AI Twin — the version of me that lives on this page and answers in my own voice. Ask me what you'd ask in an interview: the voice agents I've built, my LLM and agentic systems, Arabic NLP, PII detection, the data platforms underneath. Type it, or press the mic and talk to me.",
+  text: "I'm Shaden's AI Twin — the version of me that lives on this page and answers in my own voice. Ask me what you'd ask in an interview: the voice agents I've built, my LLM and agentic systems, Arabic NLP, PII detection, the data platforms underneath.",
+  voiceClip: '/voice/greeting.wav',
 }
-
-/** Answers whose audio is generated ahead of time and committed to /public, so
- *  playback is instant instead of a ~20s round trip to the voice-clone Space.
- *  Regenerate with `npm run gen:greeting` if GREETING.text changes. */
-const BAKED_AUDIO: Record<number, string> = { [GREETING.id]: '/greeting.wav' }
 
 const PHONE_HREF = `tel:${profile.phone.replace(/[^\d+]/g, '')}`
 
@@ -47,9 +46,11 @@ export function AITwin() {
   const bodyRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const idRef = useRef(1)
-  const speakAnswerRef = useRef<((text: string, id: number) => void) | null>(null)
+  const speakAnswerRef = useRef<((text: string, id: number, clip?: string) => void) | null>(null)
   const clonedAudioRef = useRef<HTMLAudioElement | null>(null)
   const speakAbortRef = useRef<AbortController | null>(null)
+
+  const fresh = msgs.length === 1
 
   const ask = useCallback(
     async (raw: string) => {
@@ -63,7 +64,7 @@ export function AITwin() {
       const ar = isArabic(question)
       const userMsg: Msg = { id: idRef.current++, role: 'user', text: question, ar }
       const botId = idRef.current++
-      // The answer is always in English, regardless of what the user spoke or typed —
+      // The answer is always in English, regardless of what the user typed in —
       // only the user's own bubble reflects their input language.
       setMsgs((m) => [...m, userMsg, { id: botId, role: 'bot', text: '', ar: false, streaming: true }])
       setInput('')
@@ -88,25 +89,12 @@ export function AITwin() {
     [busy, autoSpeak],
   )
 
-  const {
-    micSupported,
-    recording,
-    transcribing,
-    loadingModel,
-    modelProgress,
-    error,
-    speaking,
-    start,
-    stop,
-    cancel,
-    speak,
-    shutUp,
-  } = useVoice((text) => ask(text))
+  const { speaking, speak, shutUp } = useVoice()
 
-  /** Play an answer in Shaden's voice: a pre-baked clip if we have one, else her
-   *  cloned voice from the Space, else the browser's built-in voice. Always English. */
+  /** Play an answer in Shaden's voice: a pre-recorded clip if this line has one,
+   *  else her cloned voice from the Space, else the browser's built-in voice. */
   const speakAnswer = useCallback(
-    async (text: string, id: number) => {
+    async (text: string, id: number, clip?: string) => {
       speakAbortRef.current?.abort()
       clonedAudioRef.current?.pause()
       clonedAudioRef.current = null
@@ -117,13 +105,12 @@ export function AITwin() {
       setVoice({ id, phase: 'loading', via: 'clone' })
 
       let blob: Blob | null = null
-      const baked = BAKED_AUDIO[id]
-      if (baked) {
+      if (clip) {
         try {
-          const res = await fetch(baked, { signal: ctrl.signal })
+          const res = await fetch(clip, { signal: ctrl.signal })
           if (res.ok) blob = await res.blob()
         } catch {
-          /* fall through to the live clone */
+          /* not generated yet, or offline — fall through to the live clone */
         }
       }
       if (ctrl.signal.aborted) return
@@ -175,17 +162,14 @@ export function AITwin() {
 
   const onSpeakMsg = (m: Msg) => {
     if (voice.id === m.id && voice.phase !== 'idle') stopAllVoice()
-    else speakAnswer(m.text, m.id)
+    else speakAnswer(m.text, m.id, m.voiceClip)
   }
-
-  const micBusy = recording || transcribing
-  const fresh = msgs.length === 1 && !micBusy
 
   // Keep the transcript pinned to the newest message while it types.
   useEffect(() => {
     const el = bodyRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [msgs, recording, transcribing])
+  }, [msgs])
 
   useEffect(
     () => () => {
@@ -210,7 +194,7 @@ export function AITwin() {
           num="01"
           label="Interview"
           title="Don't read the CV. Ask me."
-          lede="Whatever you'd ask me in an interview, ask it here — type it, or press the mic and hear me answer in my own voice."
+          lede="Whatever you'd ask me in an interview, ask it here — and hear me answer in my own voice."
         />
 
         <Reveal delay={80}>
@@ -310,43 +294,9 @@ export function AITwin() {
                 <div className="twin-nudge">
                   <span className="mono">your move</span>
                   <p>
-                    Ask me what you'd ask in an interview — type below, or press{' '}
-                    <span className="twin-nudge-key" aria-hidden="true">
-                      <Mic />
-                    </span>{' '}
-                    and talk to me.
+                    Ask me what you'd ask in an interview — type it below and hit enter. Every answer can be
+                    played back in my own voice.
                   </p>
-                </div>
-              )}
-
-              {micBusy && (
-                <div className="msg user">
-                  <div className="who">you · {recording ? 'recording' : 'transcribing'}</div>
-                  <div className="body twin-rec">
-                    {recording ? (
-                      <>
-                        <span className="wave" aria-hidden="true">
-                          <i />
-                          <i />
-                          <i />
-                          <i />
-                          <i />
-                        </span>
-                        <span className="rec-hint mono">tap the mic to stop</span>
-                      </>
-                    ) : (
-                      <Loader
-                        variant="spin"
-                        label={
-                          loadingModel && modelProgress > 0 && modelProgress < 1
-                            ? `loading the speech model… ${Math.round(modelProgress * 100)}%`
-                            : loadingModel
-                              ? 'loading the speech model…'
-                              : 'transcribing…'
-                        }
-                      />
-                    )}
-                  </div>
                 </div>
               )}
             </div>
@@ -373,38 +323,15 @@ export function AITwin() {
                 disabled={busy}
               />
 
-              {micSupported && (
-                <button
-                  type="button"
-                  className="mic"
-                  data-on={recording}
-                  data-busy={transcribing}
-                  data-nudge={fresh}
-                  onClick={() => (recording ? stop() : transcribing ? cancel() : start())}
-                  aria-label={recording ? 'Stop and transcribe' : transcribing ? 'Cancel' : 'Ask by voice'}
-                  title={recording ? 'Stop and transcribe' : transcribing ? 'Cancel' : 'Ask by voice'}
-                >
-                  {recording ? <Stop /> : transcribing ? <Loader variant="spin" /> : <Mic />}
-                </button>
-              )}
-
               <button type="submit" className="icon-btn" disabled={busy} aria-label="Send question">
                 <Send />
               </button>
             </form>
 
-            {error && (
-              <p className="twin-err mono">
-                {error === 'mic-denied'
-                  ? 'I need mic access for that — enable it in your browser and try again.'
-                  : "Couldn't make out that recording — try again, or just type it."}
-              </p>
-            )}
-
             <div className="twin-foot">
               <p className="twin-tip mono">
-                Enter to send · ● to talk (first use downloads a small speech model) · answers play in my
-                cloned voice
+                Ask in English or Arabic — I always answer in English, and every answer can be read aloud in
+                my cloned voice.
               </p>
               <p className="twin-contact mono">
                 <span>Not on the CV?</span>
@@ -438,10 +365,6 @@ export function AITwin() {
               ))}
             </div>
           </div>
-          <p className="mono twin-note">
-            Speech-to-text runs entirely in your browser — your recording never leaves the page.
-            {!micSupported && ' Voice input needs a mic and a current browser.'}
-          </p>
         </Reveal>
       </div>
     </section>

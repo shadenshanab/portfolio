@@ -25,23 +25,6 @@ export const Moon = () => (
   <img src="/crescent.png" width={20} height={21} alt="" aria-hidden="true" style={{ display: 'block' }} />
 )
 
-export const Mic = () => (
-  <svg {...box} aria-hidden="true">
-    <rect x="6" y="1" width="4" height="7" />
-    <rect x="3" y="7" width="2" height="2" />
-    <rect x="11" y="7" width="2" height="2" />
-    <rect x="5" y="9" width="6" height="2" />
-    <rect x="7" y="11" width="2" height="3" />
-    <rect x="4" y="14" width="8" height="2" />
-  </svg>
-)
-
-export const Stop = () => (
-  <svg {...box} aria-hidden="true">
-    <rect x="4" y="4" width="8" height="8" />
-  </svg>
-)
-
 export const Send = () => (
   <svg {...box} aria-hidden="true">
     <rect x="2" y="7" width="8" height="2" />

@@ -207,21 +207,21 @@ export function answer(question: string): Answer {
       score += k.includes(' ') ? 4 : k.length >= 8 ? 4 : k.length >= 5 ? 2 : 1
     }
 
-    for (const w of intent.weak ?? []) {
-      if (hits(w.toLowerCase())) score += 1
-    }
-
     for (const root of arRoots[intent.id] ?? []) {
       if (qAr.includes(normalizeAr(root))) score += 3
-    }
-
-    for (const w of arWeak[intent.id] ?? []) {
-      if (qAr.includes(normalizeAr(w))) score += 1
     }
 
     for (const s of intent.strong ?? []) {
       if (q.includes(s.toLowerCase())) score += 6
     }
+
+    // Generic openers ("about", "tell me about", "حكيلي") only nudge, and only
+    // once — otherwise "tell me about your voice work" scores the 'about' intent
+    // (two opener hits) level with the real topic word and wins the tie.
+    const weakHit =
+      (intent.weak ?? []).some((w) => hits(w.toLowerCase())) ||
+      (arWeak[intent.id] ?? []).some((w) => qAr.includes(normalizeAr(w)))
+    if (weakHit) score += 1
 
     if (score > bestScore) {
       bestScore = score
