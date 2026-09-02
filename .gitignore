@@ -23,3 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 README.md
+
+# secrets
+.env
+.env.*
+worker/.dev.vars

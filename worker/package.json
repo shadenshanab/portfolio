@@ -1,0 +1,19 @@
+{
+  "name": "shaden-ai-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker proxying the AI twin to Hugging Face — holds HF_TOKEN server-side.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "secret:hf": "wrangler secret put HF_TOKEN",
+    "kv:create": "wrangler kv namespace create CACHE && wrangler kv namespace create RL"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260902.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.128.0"
+  }
+}

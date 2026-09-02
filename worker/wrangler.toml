@@ -1,0 +1,21 @@
+name = "shaden-ai-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Deploys to https://shaden-ai-api.shadenshanab.workers.dev by default.
+# Once verified, add a Custom Domain in the Cloudflare dashboard
+# (Workers & Pages -> shaden-ai-api -> Settings -> Domains & Routes -> Add ->
+# Custom Domain -> api.shaden-ai.com) instead of editing routes here — the
+# zone is already on Cloudflare (elly/garrett.ns.cloudflare.com), so this
+# just works once the Worker exists.
+
+# Both are optional at runtime — the Worker skips caching/rate-limiting
+# gracefully if a binding is missing — but real ids are set below, so they're active.
+[[kv_namespaces]]
+binding = "CACHE"
+id = "782d407976d041c1b539dd5fb2ce36a2"
+
+[[kv_namespaces]]
+binding = "RL"
+id = "e53c742c6cd840f1ab0adcbbcde90c66"
