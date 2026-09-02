@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Shaden Shanab — Full-stack Data Scientist</title>
+    <meta
+      name="description"
+      content="Shaden Shanab builds production AI systems end to end — voice agents, LLM orchestration, Arabic NLP, PII detection and the data platforms underneath. Ask her AI twin anything."
+    />
+    <link rel="canonical" href="https://shaden-ai.com/" />
+    <meta name="theme-color" content="#EDEDED" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1C1414" media="(prefers-color-scheme: dark)" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://shaden-ai.com/" />
+    <meta property="og:title" content="Shaden Shanab — Full-stack Data Scientist" />
+    <meta
+      property="og:description"
+      content="Voice agents, LLM orchestration, Arabic NLP, PII detection. Don't read the CV — interrogate it."
+    />
+    <meta property="og:image" content="https://shaden-ai.com/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Kufi+Arabic:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Person",
+        "name": "Shaden Shanab",
+        "jobTitle": "Full-stack Data Scientist",
+        "url": "https://shaden-ai.com",
+        "email": "mailto:Shadenshanab2@gmail.com",
+        "address": { "@type": "PostalAddress", "addressLocality": "Amman", "addressCountry": "JO" },
+        "knowsLanguage": ["ar", "en"],
+        "knowsAbout": [
+          "Machine Learning",
+          "Large Language Models",
+          "Agentic AI",
+          "Speech Recognition",
+          "Natural Language Processing",
+          "PII Detection",
+          "Data Governance",
+          "Time Series Forecasting",
+          "Data Engineering"
+        ]
+      }
+    </script>
+
+    <!-- Set the theme before first paint so dark-mode visitors never see a white flash. -->
+    <script>
+      (function () {
+        try {
+          var s = localStorage.getItem('shaden-theme')
+          var t = s === 'light' || s === 'dark' ? s : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+          document.documentElement.setAttribute('data-theme', t)
+          document.documentElement.style.colorScheme = t
+        } catch (e) {}
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

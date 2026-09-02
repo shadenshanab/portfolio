@@ -1,0 +1,75 @@
+/**
+ * Colour + type tokens. The four brand colours are the anchors:
+ *   #6C4A4A  #C89595  #DDBEBE  #EDEDED
+ * Light mode leads with the light two; dark mode leads with the dark two.
+ * A few derived shades exist only where WCAG contrast demands them
+ * (a true dark ground has to sit below #6C4A4A).
+ *
+ * Nothing else in the codebase should contain a raw hex value.
+ */
+
+:root {
+  /* brand anchors */
+  --brand-deep: #6c4a4a;
+  --brand-rose: #c89595;
+  --brand-blush: #ddbebe;
+  --brand-paper: #ededed;
+
+  /* light mode (default) */
+  --bg: #ededed;
+  --bg-alt: #e4e0e0;
+  --surface: #f7f3f3;
+  --surface-2: #ddbebe;
+  --border: #d6bcbc;
+  --border-strong: #c89595;
+  --text: #2e2020;
+  --text-muted: #6c4a4a;
+  --text-faint: #8a6f6f;
+  --accent: #c89595;
+  --accent-ink: #6c4a4a;
+  --accent-contrast: #ffffff;
+  --hero-block: #ddbebe;
+  --grid: rgba(108, 74, 74, 0.09);
+  --shadow: 0 1px 0 rgba(108, 74, 74, 0.08), 0 12px 30px -18px rgba(108, 74, 74, 0.5);
+  --shadow-lift: 0 2px 0 var(--brand-rose), 0 22px 44px -24px rgba(108, 74, 74, 0.6);
+
+  /* type */
+  /* Press Start 2P: the classic arcade face, evenly-weighted glyphs with
+     distinct A/B/N. Ships one weight only (400) — every font-weight on
+     .pixel is pinned to 400 in the rules below, since a requested 700
+     would synthesize a fake bold that looks broken on a pixel face.
+     Glyphs also run very wide, so sizes are scaled down and tightened
+     further than either Pixelify or Silkscreen needed. */
+  --font-pixel: 'Press Start 2P', 'Courier New', monospace;
+  --font-sans: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --font-arabic: 'Noto Kufi Arabic', 'Segoe UI', sans-serif;
+
+  /* geometry — deliberately low radii to stay in the pixel register */
+  --r-sm: 2px;
+  --r: 4px;
+  --r-lg: 6px;
+  --page: 1180px;
+  --gutter: clamp(1.25rem, 5vw, 4rem);
+}
+
+[data-theme='dark'] {
+  --bg: #1c1414;
+  --bg-alt: #171010;
+  --surface: #241a1a;
+  --surface-2: #3a2828;
+  --border: #4a3434;
+  --border-strong: #6c4a4a;
+  --text: #ededed;
+  --text-muted: #ddbebe;
+  --text-faint: #a98d8d;
+  --accent: #c89595;
+  --accent-ink: #ddbebe;
+  --accent-contrast: #1c1414;
+  /* The deep brand tone, not --surface-2: it needs to read as a block behind
+     the name rather than dissolve into the dark ground. */
+  --hero-block: #6c4a4a;
+  --grid: rgba(221, 190, 190, 0.07);
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.4), 0 12px 30px -18px rgba(0, 0, 0, 0.9);
+  --shadow-lift: 0 2px 0 var(--brand-rose), 0 22px 44px -24px rgba(0, 0, 0, 0.95);
+}
