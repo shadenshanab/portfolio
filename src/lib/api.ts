@@ -8,7 +8,7 @@
 
 import { answer, type Answer } from './answerBank'
 
-const USE_REMOTE = false
+const USE_REMOTE = true
 const CHAT_ENDPOINT = 'https://api.shaden-ai.com/chat'
 
 export type ChatResult = {
