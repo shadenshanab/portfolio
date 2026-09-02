@@ -438,6 +438,14 @@ button.chip:hover {
   background: var(--surface);
   box-shadow: var(--shadow);
   overflow: hidden;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* The card should read as an instrument you can pick up, not a screenshot —
+   it lifts when it has focus anywhere inside. */
+.term.twin:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-lift);
 }
 
 .term-bar {
@@ -447,31 +455,6 @@ button.chip:hover {
   padding: 0.55rem 0.85rem;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border-strong);
-}
-
-.term-bar .lights {
-  display: flex;
-  gap: 5px;
-}
-
-.term-bar .lights i {
-  width: 9px;
-  height: 9px;
-  background: var(--brand-deep);
-  opacity: 0.45;
-}
-
-[data-theme='dark'] .term-bar .lights i {
-  background: var(--brand-blush);
-  opacity: 0.5;
-}
-
-.term-bar .name {
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-muted);
 }
 
 .term-body {
@@ -583,6 +566,17 @@ button.chip:hover {
   animation: mic 1.4s ease-in-out infinite;
 }
 
+.mic[data-busy='true'] {
+  border-color: var(--border);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mic[data-busy='true'] .loader-gif {
+  width: 18px;
+  height: 18px;
+}
+
 @keyframes mic {
   0%,
   100% {
@@ -626,6 +620,356 @@ button.chip:hover {
   }
   50% {
     height: 14px;
+  }
+}
+
+.mic[data-nudge='true'] {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  animation: mic-nudge 2.6s ease-in-out infinite;
+}
+
+/* A slow breathing ring on the mic until the visitor has asked something —
+   a standing invitation to talk, not a demand for attention. */
+@keyframes mic-nudge {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+/* ----------------------------------------------- twin: interview panel --- */
+
+.twin-bar {
+  flex-wrap: wrap;
+  gap: 0.5rem 0.7rem;
+  padding: 0.7rem 0.95rem;
+}
+
+.twin-avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  font-size: 0.6rem;
+  color: var(--accent-contrast);
+  background: var(--accent-ink);
+  border-radius: var(--r-sm);
+}
+
+[data-theme='dark'] .twin-avatar {
+  background: var(--accent);
+}
+
+.twin-id {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.twin-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.twin-state {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.6rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.twin-state .dot {
+  width: 6px;
+  height: 6px;
+}
+
+.voice-toggle {
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+}
+
+.voice-toggle[data-on='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--surface);
+}
+
+/* ------------------------------------------------------- twin: nudge ----- */
+
+.twin-nudge {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.4rem 0 0.5rem;
+  padding: 0.9rem 1rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.twin-nudge > .mono {
+  font-size: 0.6rem;
+  color: var(--accent-ink);
+}
+
+.twin-nudge p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.twin-nudge-key {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  vertical-align: -0.35em;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--accent-ink);
+}
+
+.twin-nudge-key svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ------------------------------------------- twin: recording / dictation --- */
+
+.twin-rec {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 22px;
+}
+
+.twin-rec .wave i {
+  background: var(--accent-ink);
+}
+
+.twin-rec .rec-hint {
+  font-size: 0.6rem;
+  color: var(--text-faint);
+}
+
+.twin-err {
+  margin: 0;
+  padding: 0.55rem 0.95rem 0.7rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-top: 1px solid var(--border);
+}
+
+/* ------------------------------------------------ twin: message extras --- */
+
+.msg-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.8rem;
+}
+
+/* "Hear this in my voice" — its own control per answer, three states:
+   idle (icon + label) / loading (sweep) / speaking (equaliser bars). */
+.say {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+  padding: 0.32rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.say svg {
+  width: 13px;
+  height: 13px;
+}
+
+.say:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.say[data-active='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--surface);
+}
+
+/* ------------------------------------------------------- twin: footer ---- */
+
+.twin-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.2rem;
+  padding: 0.7rem 0.95rem 0.8rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+[data-theme='dark'] .twin-foot {
+  background: var(--bg-alt);
+}
+
+.twin-tip {
+  margin: 0;
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.twin-contact {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.9rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+
+.twin-contact span {
+  color: var(--text-faint);
+}
+
+.twin-contact a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--accent-ink);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.twin-contact a:hover {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.twin-contact svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* -------------------------------------------------- twin: suggestions ---- */
+
+.twin-try {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 0.75rem;
+  margin-top: 1.1rem;
+}
+
+.twin-try > .mono {
+  font-size: 0.6rem;
+  color: var(--text-faint);
+}
+
+.twin-try-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.twin-note {
+  color: var(--text-faint);
+  margin-top: 1rem;
+  letter-spacing: 0.08em;
+}
+
+/* ------------------------------------------------------------- loaders --- */
+
+.loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.loader-gif {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: block;
+  image-rendering: auto;
+}
+
+.loader-glyph {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 12px;
+}
+
+.loader-glyph i {
+  width: 3px;
+  height: 3px;
+  background: var(--accent-ink);
+  animation: ld-bar 0.9s ease-in-out infinite;
+}
+
+.loader-glyph i:nth-child(2) {
+  animation-delay: 0.1s;
+}
+.loader-glyph i:nth-child(3) {
+  animation-delay: 0.2s;
+}
+.loader-glyph i:nth-child(4) {
+  animation-delay: 0.3s;
+}
+.loader-glyph i:nth-child(5) {
+  animation-delay: 0.4s;
+}
+
+@keyframes ld-bar {
+  0%,
+  100% {
+    height: 3px;
+  }
+  50% {
+    height: 12px;
+  }
+}
+
+.loader-label {
+  color: var(--text-faint);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+}
+
+/* With motion suppressed the bars would freeze mid-animation — show them at rest
+   instead (the label carries the meaning). The gif is left as-is: it's a single
+   decorative element and the reader's OS is already honouring the preference at
+   the image level in most browsers. */
+@media (prefers-reduced-motion: reduce) {
+  .loader-glyph i {
+    height: 6px !important;
   }
 }
 

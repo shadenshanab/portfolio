@@ -1,97 +1,149 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { decodePcm16k, loadTranscriber, transcriberReady, type ModelProgress } from '../lib/transcribe'
 
 /**
- * Browser-native speech in and out. No backend, no cost, no audio leaves the device.
- * SpeechRecognition is Chromium/Safari only — `supported` is false in Firefox
- * so the UI can hide the mic instead of showing a button that errors.
+ * Voice for the AI twin.
+ *
+ * IN  — records a question with MediaRecorder and transcribes it in-browser with
+ *       Whisper (see ../lib/transcribe). Nothing is uploaded. Works in any
+ *       browser with a mic, Firefox included — no Web Speech API dependency.
+ * OUT — the browser's own speech synthesis, used only as the fallback when
+ *       Shaden's cloned voice can't be reached.
  */
 
-type SpeechRecognitionLike = {
-  lang: string
-  continuous: boolean
-  interimResults: boolean
-  start(): void
-  stop(): void
-  abort(): void
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null
-  onend: (() => void) | null
-  onerror: ((e: { error: string }) => void) | null
-}
-
-function getCtor(): (new () => SpeechRecognitionLike) | null {
-  const w = window as unknown as Record<string, unknown>
-  return (w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null) as (new () => SpeechRecognitionLike) | null
-}
+type MicPhase = 'idle' | 'recording' | 'loading-model' | 'transcribing'
 
 export function useVoice(onFinal: (text: string) => void) {
-  const [supported] = useState(() => !!getCtor() && typeof window.speechSynthesis !== 'undefined')
-  const [listening, setListening] = useState(false)
-  const [interim, setInterim] = useState('')
+  const [micSupported] = useState(
+    () =>
+      typeof navigator !== 'undefined' &&
+      !!navigator.mediaDevices?.getUserMedia &&
+      typeof window.MediaRecorder !== 'undefined',
+  )
+  const [phase, setPhase] = useState<MicPhase>('idle')
+  const [modelProgress, setModelProgress] = useState(0) // 0..1, only during the first-ever load
+  const [error, setError] = useState<'mic-denied' | 'transcribe-failed' | null>(null)
   const [speaking, setSpeaking] = useState(false)
-  const recRef = useRef<SpeechRecognitionLike | null>(null)
+
+  const recRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
+  const cancelledRef = useRef(false)
   const finalRef = useRef(onFinal)
 
   useEffect(() => {
     finalRef.current = onFinal
   }, [onFinal])
 
-  const stop = useCallback(() => {
-    recRef.current?.stop()
-    setListening(false)
+  const releaseMic = useCallback(() => {
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    streamRef.current = null
   }, [])
 
-  const start = useCallback((lang: 'en-US' | 'ar-JO' = 'en-US') => {
-    const Ctor = getCtor()
-    if (!Ctor) return
-    recRef.current?.abort()
+  const onProgress = useCallback((p: ModelProgress) => {
+    if (p.status === 'progress' && p.total) setModelProgress(p.loaded && p.total ? p.loaded / p.total : 0)
+    if (p.status === 'ready' || p.status === 'done') setModelProgress(1)
+  }, [])
 
-    const rec = new Ctor()
-    rec.lang = lang
-    rec.continuous = false
-    rec.interimResults = true
+  const start = useCallback(async () => {
+    if (!micSupported || recRef.current) return
+    setError(null)
+    cancelledRef.current = false
 
-    rec.onresult = (e) => {
-      let text = ''
-      let done = false
-      for (let i = 0; i < e.results.length; i++) {
-        const r = e.results[i]
-        text += r[0].transcript
-        if (r.isFinal) done = true
-      }
-      setInterim(text)
-      if (done && text.trim()) {
-        setInterim('')
-        finalRef.current(text.trim())
-      }
+    // Warm the model up in parallel with the permission prompt / recording, so
+    // by the time they stop talking it's usually ready.
+    loadTranscriber(onProgress).catch(() => {})
+
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      setError('mic-denied')
+      return
     }
-    rec.onend = () => {
-      setListening(false)
-      setInterim('')
+    streamRef.current = stream
+    chunksRef.current = []
+
+    const rec = new MediaRecorder(
+      stream,
+      MediaRecorder.isTypeSupported('audio/webm') ? { mimeType: 'audio/webm' } : undefined,
+    )
+    rec.ondataavailable = (e) => {
+      if (e.data.size) chunksRef.current.push(e.data)
     }
-    rec.onerror = () => {
-      setListening(false)
-      setInterim('')
+    rec.onstop = async () => {
+      recRef.current = null
+      releaseMic()
+      if (cancelledRef.current) {
+        setPhase('idle')
+        return
+      }
+      const chunks = chunksRef.current
+      const blob = new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' })
+      if (!blob.size) {
+        setPhase('idle')
+        return
+      }
+      try {
+        setPhase(transcriberReady() ? 'transcribing' : 'loading-model')
+        const pipe = await loadTranscriber(onProgress)
+        setPhase('transcribing')
+        const audio = await decodePcm16k(blob)
+        if (audio.length < 1600) {
+          setPhase('idle')
+          return
+        }
+        const out = await pipe(audio, { task: 'transcribe', chunk_length_s: 30, stride_length_s: 5 })
+        const text = (out.text ?? '').trim()
+        setPhase('idle')
+        if (text && !cancelledRef.current) finalRef.current(text)
+      } catch {
+        setError('transcribe-failed')
+        setPhase('idle')
+      }
     }
 
     recRef.current = rec
-    try {
-      rec.start()
-      setListening(true)
-    } catch {
-      setListening(false)
-    }
+    rec.start()
+    setPhase('recording')
+  }, [micSupported, onProgress, releaseMic])
+
+  const stop = useCallback(() => {
+    if (recRef.current && recRef.current.state !== 'inactive') recRef.current.stop()
   }, [])
 
-  const speak = useCallback((text: string, arabic = false) => {
-    if (typeof window.speechSynthesis === 'undefined') return
+  const cancel = useCallback(() => {
+    cancelledRef.current = true
+    if (recRef.current && recRef.current.state !== 'inactive') {
+      recRef.current.stop()
+    } else {
+      releaseMic()
+      setPhase('idle')
+    }
+  }, [releaseMic])
+
+  /** `onDone` fires when the browser voice finishes or errors — the cloned-voice
+   *  path has its own audio-element events, but the fallback path needs this to
+   *  know when to clear its "speaking" UI. */
+  const speak = useCallback((text: string, arabic = false, onDone?: () => void) => {
+    if (typeof window.speechSynthesis === 'undefined') {
+      onDone?.()
+      return
+    }
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
     u.lang = arabic ? 'ar-SA' : 'en-US'
     u.rate = 1.02
     u.pitch = 1
     u.onstart = () => setSpeaking(true)
-    u.onend = () => setSpeaking(false)
-    u.onerror = () => setSpeaking(false)
+    u.onend = () => {
+      setSpeaking(false)
+      onDone?.()
+    }
+    u.onerror = () => {
+      setSpeaking(false)
+      onDone?.()
+    }
     window.speechSynthesis.speak(u)
   }, [])
 
@@ -100,10 +152,28 @@ export function useVoice(onFinal: (text: string) => void) {
     setSpeaking(false)
   }, [])
 
-  useEffect(() => () => {
-    recRef.current?.abort()
-    window.speechSynthesis?.cancel()
-  }, [])
+  useEffect(
+    () => () => {
+      if (recRef.current && recRef.current.state !== 'inactive') recRef.current.stop()
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      window.speechSynthesis?.cancel()
+    },
+    [],
+  )
 
-  return { supported, listening, interim, speaking, start, stop, speak, shutUp }
+  return {
+    micSupported,
+    recording: phase === 'recording',
+    // "loading-model" and "transcribing" are one state as far as the UI cares.
+    transcribing: phase === 'loading-model' || phase === 'transcribing',
+    loadingModel: phase === 'loading-model',
+    modelProgress,
+    error,
+    speaking,
+    start,
+    stop,
+    cancel,
+    speak,
+    shutUp,
+  }
 }

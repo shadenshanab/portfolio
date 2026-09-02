@@ -10,6 +10,7 @@ import { answer, type Answer } from './answerBank'
 
 const USE_REMOTE = true
 const CHAT_ENDPOINT = 'https://api.shaden-ai.com/chat'
+const SPEAK_ENDPOINT = 'https://api.shaden-ai.com/speak'
 
 export type ChatResult = {
   /** Streams the answer chunk by chunk so the UI can type it out. */
@@ -84,5 +85,29 @@ export function chat(question: string, signal?: AbortSignal): ChatResult {
         return usedRemote ? ('remote' as const) : ('local' as const)
       },
     }) as ChatResult['meta'],
+  }
+}
+
+/**
+ * Cloned-voice text-to-speech (Shaden's own recorded voice, via a Cloudflare
+ * Worker proxying a ZeroGPU HF Space). Generation takes ~15-25s, so this is
+ * meant to be tried once and abandoned on any failure — never retried, never
+ * thrown — the caller falls back to the browser's instant built-in voice.
+ * Returns null on anything short of a clean 200: network error, cold Space,
+ * rate limit, or the reference audio not being deployed yet.
+ */
+export async function fetchClonedSpeech(text: string, signal?: AbortSignal): Promise<Blob | null> {
+  try {
+    const res = await fetch(SPEAK_ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal,
+    })
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return blob.size > 0 ? blob : null
+  } catch {
+    return null
   }
 }

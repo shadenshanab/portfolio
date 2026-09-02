@@ -31,6 +31,23 @@ const RATE_LIMIT_PER_HOUR = 15
 const GLOBAL_DAILY_CAP = 300
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 7 // 7 days
 
+// Voice cloning: a ZeroGPU Gradio Space (Qwen3-TTS-12Hz-0.6B-Base), cloning
+// Shaden's own recorded voice. Both the reference audio and its transcript are
+// fixed server-side — the browser only ever sends the text to speak, never a
+// voice to clone, so this can't be repurposed to clone an arbitrary voice.
+// 0.6B chosen over 1.7B after listening to both: clearly good enough, and
+// meaningfully faster/cheaper against the daily ZeroGPU quota.
+const TTS_SPACE = 'https://shadenshanab-qwen3-tts.hf.space'
+const REF_AUDIO_URL = 'https://shaden-ai.com/voice-ref.wav'
+const REF_TEXT =
+  "Hi, I'm Shaden. I build AI systems that actually ship — voice agents, data platforms, and everything in between. Thanks for stopping by my portfolio, and I hope you find something interesting here."
+const TTS_MODEL_SIZE = '0.6B'
+const MAX_SPEAK_CHARS = 600 // a chat answer is at most ~400 tokens anyway
+const SPEAK_RATE_LIMIT_PER_HOUR = 5 // generation burns real ZeroGPU quota (~20s each) — cache absorbs repeats
+const SPEAK_GLOBAL_DAILY_CAP = 40
+const SPEAK_CACHE_TTL_SECONDS = 60 * 60 * 24 * 30 // 30 days — the voice never changes for the same text
+const SPEAK_TIMEOUT_MS = 28_000 // stay under Cloudflare's free-plan wall-clock ceiling
+
 function corsHeaders(origin: string | null): HeadersInit {
   const allowed = origin && ALLOWED_ORIGINS.has(origin) ? origin : ''
   return {
@@ -51,14 +68,22 @@ function json(body: unknown, status: number, origin: string | null) {
 const isArabic = (text: string) => /[؀-ۿ]/.test(text)
 const normCacheKey = (q: string) => 'q:' + q.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 200)
 
-async function checkRateLimit(env: Env, ip: string): Promise<boolean> {
+/** `prefix` keeps /chat and /speak counted separately — burning the chat
+ *  limit should never block voice generation or vice versa. */
+async function checkRateLimit(
+  env: Env,
+  ip: string,
+  prefix: string,
+  perHour: number,
+  perDay: number,
+): Promise<boolean> {
   if (!env.RL) return true // no binding configured yet — allow, don't crash
-  const hourKey = `ip:${ip}:${new Date().toISOString().slice(0, 13)}`
-  const dayKey = `day:${new Date().toISOString().slice(0, 10)}`
+  const hourKey = `${prefix}:ip:${ip}:${new Date().toISOString().slice(0, 13)}`
+  const dayKey = `${prefix}:day:${new Date().toISOString().slice(0, 10)}`
 
   const [ipCount, dayCount] = await Promise.all([env.RL.get(hourKey), env.RL.get(dayKey)])
-  if (Number(ipCount ?? 0) >= RATE_LIMIT_PER_HOUR) return false
-  if (Number(dayCount ?? 0) >= GLOBAL_DAILY_CAP) return false
+  if (Number(ipCount ?? 0) >= perHour) return false
+  if (Number(dayCount ?? 0) >= perDay) return false
 
   await Promise.all([
     env.RL.put(hourKey, String(Number(ipCount ?? 0) + 1), { expirationTtl: 3600 }),
@@ -78,6 +103,16 @@ function streamText(text: string, origin: string | null) {
   return new Response(stream, { headers: { 'content-type': 'text/plain; charset=utf-8', ...corsHeaders(origin) } })
 }
 
+// A user can explicitly ask the model to answer in Arabic/dialect despite the
+// system prompt forbidding it, and this 8B model sometimes complies anyway —
+// prompting alone couldn't close this out (verified: failures always start
+// in Arabic from the very first token, never partway through). This is the
+// deterministic backstop: every delta is checked for Arabic script BEFORE
+// it's forwarded, so no Arabic can ever reach the browser regardless of what
+// the model decides to do.
+const ENGLISH_ONLY_FALLBACK =
+  "I can only answer in English here — ask me that again and I'll reply in English."
+
 /** Converts HF's OpenAI-style SSE chat stream into plain text chunks, and tees the
  *  full answer into KV once it's done — the frontend only ever reads raw text. */
 function relayAndCache(upstream: ReadableStream<Uint8Array>, env: Env, cacheKey: string, origin: string | null) {
@@ -85,12 +120,14 @@ function relayAndCache(upstream: ReadableStream<Uint8Array>, env: Env, cacheKey:
   const encoder = new TextEncoder()
   let buffer = ''
   let full = ''
+  let tainted = false
 
   const stream = new ReadableStream({
     async start(controller) {
       const reader = upstream.getReader()
       try {
         for (;;) {
+          if (tainted) break
           const { done, value } = await reader.read()
           if (done) break
           buffer += decoder.decode(value, { stream: true })
@@ -106,6 +143,16 @@ function relayAndCache(upstream: ReadableStream<Uint8Array>, env: Env, cacheKey:
               const parsed = JSON.parse(payload)
               const delta: string | undefined = parsed?.choices?.[0]?.delta?.content
               if (delta) {
+                if (isArabic(delta)) {
+                  // Caught before a single Arabic character reaches the client.
+                  // Discard everything generated so far, substitute a safe reply,
+                  // and stop pulling further (already-wasted) tokens from HF.
+                  tainted = true
+                  full = ENGLISH_ONLY_FALLBACK
+                  controller.enqueue(encoder.encode(ENGLISH_ONLY_FALLBACK))
+                  await reader.cancel()
+                  break
+                }
                 full += delta
                 controller.enqueue(encoder.encode(delta))
               }
@@ -144,7 +191,7 @@ async function handleChat(req: Request, env: Env): Promise<Response> {
   }
 
   const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown'
-  const allowed = await checkRateLimit(env, ip)
+  const allowed = await checkRateLimit(env, ip, 'chat', RATE_LIMIT_PER_HOUR, GLOBAL_DAILY_CAP)
   if (!allowed) return json({ error: 'rate limit exceeded, try again later' }, 429, origin)
 
   const ar = isArabic(question)
@@ -185,6 +232,124 @@ async function handleChat(req: Request, env: Env): Promise<Response> {
   return relayAndCache(upstream.body, env, cacheKey, origin)
 }
 
+async function sha256Hex(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+type GradioFileResult = { url: string } | null
+
+/** Calls one Gradio `/gradio_api/call/<fn>` endpoint (POST to start, then poll
+ *  its SSE result stream) and returns the first file result it completes with. */
+async function callGradioForFile(fnName: string, data: unknown[], timeoutMs: number): Promise<GradioFileResult> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const post = await fetch(`${TTS_SPACE}/gradio_api/call/${fnName}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ data }),
+      signal: controller.signal,
+    })
+    if (!post.ok) return null
+    const { event_id } = (await post.json()) as { event_id?: string }
+    if (!event_id) return null
+
+    const res = await fetch(`${TTS_SPACE}/gradio_api/call/${fnName}/${event_id}`, {
+      headers: { accept: 'text/event-stream' },
+      signal: controller.signal,
+    })
+    if (!res.ok || !res.body) return null
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const events = buffer.split('\n\n')
+      buffer = events.pop() ?? ''
+      for (const evt of events) {
+        const m = evt.match(/^data: (.*)$/m)
+        if (!m) continue
+        if (evt.includes('event: error')) return null
+        try {
+          const parsed = JSON.parse(m[1])
+          const file = parsed?.[0]
+          if (file?.url) {
+            await reader.cancel()
+            return { url: file.url }
+          }
+        } catch {
+          // heartbeat or partial payload — keep polling
+        }
+      }
+    }
+    return null
+  } catch {
+    return null // network error, or aborted by the timeout above
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function handleSpeak(req: Request, env: Env): Promise<Response> {
+  const origin = req.headers.get('Origin')
+  if (origin && !ALLOWED_ORIGINS.has(origin)) return json({ error: 'origin not allowed' }, 403, null)
+
+  let body: { text?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return json({ error: 'invalid json' }, 400, origin)
+  }
+
+  const text = (body.text ?? '').trim().slice(0, MAX_SPEAK_CHARS)
+  if (!text) return json({ error: 'text required' }, 400, origin)
+
+  const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown'
+  const cacheKey = `speak:${await sha256Hex(text)}`
+
+  // Cache check happens before the rate limit: a repeat of a common answer
+  // should never cost the visitor their quota, only a genuinely new line does.
+  if (env.CACHE) {
+    const cached = await env.CACHE.get(cacheKey, { type: 'arrayBuffer' })
+    if (cached) {
+      return new Response(cached, { headers: { 'content-type': 'audio/wav', ...corsHeaders(origin) } })
+    }
+  }
+
+  const allowed = await checkRateLimit(env, ip, 'speak', SPEAK_RATE_LIMIT_PER_HOUR, SPEAK_GLOBAL_DAILY_CAP)
+  if (!allowed) return json({ error: 'rate limit exceeded, try again later' }, 429, origin)
+
+  const result = await callGradioForFile(
+    'generate_voice_clone',
+    [
+      { path: null, url: REF_AUDIO_URL, meta: { _type: 'gradio.FileData' } },
+      REF_TEXT,
+      text,
+      'English',
+      false,
+      TTS_MODEL_SIZE,
+    ],
+    SPEAK_TIMEOUT_MS,
+  )
+  if (!result) return json({ error: 'voice generation unavailable' }, 502, origin)
+
+  const audioRes = await fetch(result.url)
+  if (!audioRes.ok || !audioRes.body) return json({ error: 'failed to fetch generated audio' }, 502, origin)
+  const audioBytes = await audioRes.arrayBuffer()
+
+  if (env.CACHE) {
+    await env.CACHE.put(cacheKey, audioBytes, { expirationTtl: SPEAK_CACHE_TTL_SECONDS })
+  }
+
+  return new Response(audioBytes, { headers: { 'content-type': 'audio/wav', ...corsHeaders(origin) } })
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const origin = req.headers.get('Origin')
@@ -196,6 +361,10 @@ export default {
 
     if (url.pathname === '/chat' && req.method === 'POST') {
       return handleChat(req, env)
+    }
+
+    if (url.pathname === '/speak' && req.method === 'POST') {
+      return handleSpeak(req, env)
     }
 
     if (url.pathname === '/health') {
