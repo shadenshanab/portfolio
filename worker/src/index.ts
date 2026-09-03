@@ -42,11 +42,18 @@ const REF_AUDIO_URL = 'https://shaden-ai.com/voice-ref.wav'
 const REF_TEXT =
   "Hi, I'm Shaden. I build AI systems that actually ship — voice agents, data platforms, and everything in between. Thanks for stopping by my portfolio, and I hope you find something interesting here."
 const TTS_MODEL_SIZE = '0.6B'
-const MAX_SPEAK_CHARS = 600 // a chat answer is at most ~400 tokens anyway
+const MAX_SPEAK_CHARS = 700 // covers the longest answer-bank line; LLM replies are capped at 400 tokens
 const SPEAK_RATE_LIMIT_PER_HOUR = 5 // generation burns real ZeroGPU quota (~20s each) — cache absorbs repeats
 const SPEAK_GLOBAL_DAILY_CAP = 40
 const SPEAK_CACHE_TTL_SECONDS = 60 * 60 * 24 * 30 // 30 days — the voice never changes for the same text
-const SPEAK_TIMEOUT_MS = 28_000 // stay under Cloudflare's free-plan wall-clock ceiling
+// The Space keeps the GPU attached for ~a minute after a call, so a *warm*
+// generation is ~10-20s; a *cold* one (GPU detached, weights back on CPU) is
+// 40-90s. There's no free-plan wall-clock ceiling to worry about — a Worker
+// runs as long as the client stays connected — so give a cold Space room to
+// finish instead of killing it at 28s and dropping every visitor to the
+// browser voice. The browser-side fetch and the UI copy set the real patience
+// budget.
+const SPEAK_TIMEOUT_MS = 55_000
 
 function corsHeaders(origin: string | null): HeadersInit {
   const allowed = origin && ALLOWED_ORIGINS.has(origin) ? origin : ''
@@ -256,7 +263,12 @@ async function uploadRefAudio(env: Env, signal: AbortSignal): Promise<string | n
   const form = new FormData()
   form.append('files', new Blob([await audio.arrayBuffer()], { type: 'audio/wav' }), 'voice-ref.wav')
 
-  const up = await fetch(`${TTS_SPACE}/gradio_api/upload`, { method: 'POST', body: form, signal })
+  const up = await fetch(`${TTS_SPACE}/gradio_api/upload`, {
+    method: 'POST',
+    body: form,
+    headers: { Authorization: `Bearer ${env.HF_TOKEN}` },
+    signal,
+  })
   if (!up.ok) return null
   const paths = (await up.json()) as string[]
   const path = paths?.[0]
@@ -269,15 +281,27 @@ async function uploadRefAudio(env: Env, signal: AbortSignal): Promise<string | n
 }
 
 /** Calls one Gradio `/gradio_api/call/<fn>` endpoint (POST to start, then poll
- *  its SSE result stream) and returns the first file result it completes with. */
-async function callGradioForFile(fnName: string, data: unknown[], timeoutMs: number): Promise<GradioFileResult> {
+ *  its SSE result stream) and returns the first file result it completes with.
+ *
+ *  `token` is required: the Space runs on ZeroGPU, which refuses to allocate a
+ *  GPU to an unauthenticated API caller — the task is accepted, queued, then
+ *  killed, surfacing here as an `event: error`. The browser UI works because the
+ *  visitor's own HF session authenticates it; this server-to-server path has to
+ *  carry the token itself. */
+async function callGradioForFile(
+  fnName: string,
+  data: unknown[],
+  timeoutMs: number,
+  token: string,
+): Promise<GradioFileResult> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const auth = { Authorization: `Bearer ${token}` }
 
   try {
     const post = await fetch(`${TTS_SPACE}/gradio_api/call/${fnName}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...auth },
       body: JSON.stringify({ data }),
       signal: controller.signal,
     })
@@ -286,7 +310,7 @@ async function callGradioForFile(fnName: string, data: unknown[], timeoutMs: num
     if (!event_id) return null
 
     const res = await fetch(`${TTS_SPACE}/gradio_api/call/${fnName}/${event_id}`, {
-      headers: { accept: 'text/event-stream' },
+      headers: { accept: 'text/event-stream', ...auth },
       signal: controller.signal,
     })
     if (!res.ok || !res.body) return null
@@ -378,10 +402,11 @@ async function handleSpeak(req: Request, env: Env): Promise<Response> {
       TTS_MODEL_SIZE,
     ],
     SPEAK_TIMEOUT_MS,
+    env.HF_TOKEN,
   )
   if (!result) return json({ error: 'voice generation unavailable' }, 502, origin)
 
-  const audioRes = await fetch(result.url)
+  const audioRes = await fetch(result.url, { headers: { Authorization: `Bearer ${env.HF_TOKEN}` } })
   if (!audioRes.ok || !audioRes.body) return json({ error: 'failed to fetch generated audio' }, 502, origin)
   const audioBytes = await audioRes.arrayBuffer()
 

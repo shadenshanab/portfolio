@@ -241,5 +241,6 @@ export const suggestions = [
   { en: 'Walk me through the PII project', ar: null },
   { en: 'Can you do full-stack, or just models?', ar: null },
   { en: 'شو خبرتك بالذكاء الاصطناعي؟', ar: true },
+  { en: 'What makes you stand out?', ar: null },
   { en: 'Why should I hire you?', ar: null },
 ]

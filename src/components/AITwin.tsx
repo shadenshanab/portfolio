@@ -12,7 +12,14 @@ import { Mail, Phone, Send, Speaker } from './icons'
  *  'loading'  — fetching the audio (pre-baked clip, or a fresh clone ~15-25s)
  *  'speaking' — audio is playing (cloned file, or the browser fallback) */
 type VoicePhase = 'idle' | 'loading' | 'speaking'
-type Voice = { id: number | null; phase: VoicePhase; via: 'clone' | 'browser' }
+type Voice = {
+  id: number | null
+  phase: VoicePhase
+  via: 'clone' | 'browser'
+  /** `loading` has run long enough that this is clearly a cold generation on the
+   *  Space (~40-90s), not a cache hit (~1s) — so the UI can say so. */
+  slow?: boolean
+}
 const VOICE_IDLE: Voice = { id: null, phase: 'idle', via: 'clone' }
 
 type Msg = {
@@ -53,7 +60,7 @@ export function AITwin() {
   const fresh = msgs.length === 1
 
   const ask = useCallback(
-    async (raw: string) => {
+    async (raw: string, opts?: { fromChip?: boolean }) => {
       const question = raw.trim()
       if (!question || busy) return
 
@@ -70,7 +77,7 @@ export function AITwin() {
       setInput('')
       setBusy(true)
 
-      const { stream, meta } = chat(question, ctrl.signal)
+      const { stream, meta } = chat(question, ctrl.signal, opts?.fromChip)
       let full = ''
       try {
         for await (const chunk of stream) {
@@ -81,10 +88,22 @@ export function AITwin() {
         full = full || 'Something went wrong on my side. Try asking that again.'
       }
 
-      const { sources } = await meta
-      setMsgs((m) => m.map((x) => (x.id === botId ? { ...x, text: full, sources, streaming: false } : x)))
+      const { sources, matched, mode } = await meta
+      // When the answer is the bank's exact wording (chip click, greeting, or an
+      // LLM fallback), there's a pre-rendered clip of it in Shaden's voice —
+      // instant, no Space round trip. The live clone only runs for genuinely
+      // novel LLM answers.
+      const voiceClip =
+        mode === 'local' && matched !== 'none'
+          ? matched === 'greeting'
+            ? '/voice/greeting.wav'
+            : `/voice/bank/${matched}.wav`
+          : undefined
+      setMsgs((m) =>
+        m.map((x) => (x.id === botId ? { ...x, text: full, sources, streaming: false, voiceClip } : x)),
+      )
       setBusy(false)
-      if (autoSpeak) speakAnswerRef.current?.(full, botId)
+      if (autoSpeak) speakAnswerRef.current?.(full, botId, voiceClip)
     },
     [busy, autoSpeak],
   )
@@ -114,7 +133,21 @@ export function AITwin() {
         }
       }
       if (ctrl.signal.aborted) return
-      if (!blob) blob = await fetchClonedSpeech(text, ctrl.signal)
+
+      if (!blob) {
+        // Hitting the live Space now. A cache hit returns in ~1s; a cold
+        // generation is 40-90s. Once it's clearly the latter, flip the label
+        // from "loading" to "warming up" so it doesn't look hung.
+        const slowTimer = setTimeout(
+          () => setVoice((v) => (v.id === id && v.phase === 'loading' ? { ...v, slow: true } : v)),
+          4000,
+        )
+        try {
+          blob = await fetchClonedSpeech(text, ctrl.signal)
+        } finally {
+          clearTimeout(slowTimer)
+        }
+      }
       if (ctrl.signal.aborted) return
 
       if (!blob) {
@@ -273,11 +306,18 @@ export function AITwin() {
                       }
                     >
                       {voice.id === m.id && voice.phase === 'loading' ? (
-                        <Loader variant="spin" label="loading my voice…" />
+                        <Loader
+                          variant="spin"
+                          label={voice.slow ? 'warming up my voice — first play takes ~40s…' : 'loading my voice…'}
+                        />
                       ) : voice.id === m.id && voice.phase === 'speaking' ? (
                         <Loader
                           variant="bars"
-                          label={voice.via === 'browser' ? 'speaking' : 'speaking — tap to stop'}
+                          label={
+                            voice.via === 'browser'
+                              ? 'stand-in voice — my recording didn’t load'
+                              : 'speaking — tap to stop'
+                          }
                         />
                       ) : (
                         <>
@@ -356,7 +396,7 @@ export function AITwin() {
                 <button
                   key={s.en}
                   className="chip"
-                  onClick={() => ask(s.en)}
+                  onClick={() => ask(s.en, { fromChip: true })}
                   disabled={busy}
                   style={s.ar ? { fontFamily: 'var(--font-arabic)', letterSpacing: 0 } : undefined}
                 >

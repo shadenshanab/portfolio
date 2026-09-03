@@ -53,11 +53,16 @@ function localChat(question: string, signal?: AbortSignal): ChatResult {
 }
 
 async function* remoteStream(question: string, signal?: AbortSignal): AsyncIterable<string> {
+  // Cap the whole round trip: a healthy answer either streams from KV instantly
+  // or starts token-by-token within a second or two. If nothing lands in 22s the
+  // Worker is wedged — abort so `guarded()` can fall back to the bank instead of
+  // leaving "thinking…" on screen indefinitely.
+  const timeout = AbortSignal.timeout(22_000)
   const res = await fetch(CHAT_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ question }),
-    signal,
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   })
   if (!res.ok || !res.body) throw new Error(`chat ${res.status}`)
   const reader = res.body.getReader()
@@ -69,11 +74,13 @@ async function* remoteStream(question: string, signal?: AbortSignal): AsyncItera
   }
 }
 
-export function chat(question: string, signal?: AbortSignal): ChatResult {
+export function chat(question: string, signal?: AbortSignal, preferLocal = false): ChatResult {
   const a = answer(question)
 
-  // The opening turn never needs a model.
-  if (!USE_REMOTE || a.matched === 'greeting') return localChat(question, signal)
+  // The opening turn never needs a model. Neither do the suggestion chips
+  // (`preferLocal`) — those are served from the grounded bank on purpose:
+  // instant, free, a pre-baked voice clip, and they work with the Worker down.
+  if (!USE_REMOTE || preferLocal || a.matched === 'greeting') return localChat(question, signal)
 
   let usedRemote = true
 

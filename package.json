@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "gen:greeting": "node scripts/gen-greeting.mjs"
+    "gen:voice": "node scripts/gen-voice.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",
