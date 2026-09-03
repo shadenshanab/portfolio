@@ -9,8 +9,8 @@ export function Proof() {
         <SectionHead
           num="05"
           label="Credentials"
-          title="Ranked first in a country, then certified."
-          lede="Education and recognition, in the order it happened."
+          title="Certified, and ranked first in Jordan."
+          lede="The education and recognition behind the work — most recent first."
         />
 
         <div className="proof-list">

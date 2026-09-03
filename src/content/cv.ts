@@ -13,7 +13,6 @@ export const profile = {
   location: 'Amman, Jordan',
   email: 'Shadenshanab2@gmail.com',
   phone: '+962 79 891 8701',
-  github: 'https://github.com/shadenshanab',
   linkedin: 'https://www.linkedin.com/in/shaden-shanab-480377194',
   cv: 'Shaden_Shanab.pdf',
   intro:
@@ -197,7 +196,7 @@ export const proof = [
     year: '2023',
     title: 'Top Jordanian Student in Artificial Intelligence',
     issuer: 'Ministry of Higher Education',
-    note: 'National recognition as the top AI student in Jordan.',
+    note: 'Ranked 1st by GPA among all AI students at Jordanian universities.',
   },
   {
     year: '2021—2023',

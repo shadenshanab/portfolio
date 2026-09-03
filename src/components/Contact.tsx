@@ -27,9 +27,6 @@ export function Contact() {
             <a className="btn primary" href={`mailto:${profile.email}`}>
               {profile.email}
             </a>
-            <a className="btn" href={profile.github} target="_blank" rel="noreferrer noopener">
-              GitHub
-            </a>
             <a className="btn" href={profile.linkedin} target="_blank" rel="noreferrer noopener">
               LinkedIn
             </a>

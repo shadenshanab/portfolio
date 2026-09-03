@@ -41,7 +41,6 @@ export function CommandPalette({
         run: () => window.open(`/${profile.cv}`, '_blank', 'noopener'),
       },
       { id: 'mail', label: `Email ${profile.email}`, hint: 'contact', run: () => (window.location.href = `mailto:${profile.email}`) },
-      { id: 'gh', label: 'Open GitHub', hint: 'link', run: () => window.open(profile.github, '_blank', 'noopener') },
       { id: 'li', label: 'Open LinkedIn', hint: 'link', run: () => window.open(profile.linkedin, '_blank', 'noopener') },
     ]
   }, [onToggleTheme])
